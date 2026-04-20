@@ -123,7 +123,7 @@ jobs:
 
       - name: Verify compiled output
         run: |
-          test -f dist/index.js || (echo "Build output missing" && exit 1)
+          test -f dist/src/index.js || (echo "Build output missing" && exit 1)
           test -d public || (echo "Public directory missing" && exit 1)
 
   docker-build-and-scan:
