@@ -35,7 +35,6 @@ describe("plan API endpoint", () => {
       checkpointer: createInMemoryCheckpointer(),
       itineraryAgentDependencies: {
         searchFlights: async () => [],
-        searchHotels: async () => [],
         fetchWeather: async () => ({
           location: "Rome, Italy",
           timezone: "Europe/Rome",

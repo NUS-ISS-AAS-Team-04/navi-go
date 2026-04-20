@@ -3,10 +3,6 @@ import {
   type FlightOption,
 } from "../tools/flights/duffel-flight.tool.js";
 import {
-  searchHotelOffers,
-  type HotelOption,
-} from "../tools/hotels/expedia-hotel.tool.js";
-import {
   fetchWeatherRiskSummary,
   type WeatherRiskSummary,
 } from "../tools/weather/openmeteo-weather.tool.js";
@@ -14,13 +10,11 @@ import { makeDecisionLog, type ItineraryDay, type PlannerState } from "../graph/
 
 export type ItineraryAgentDependencies = {
   searchFlights: typeof searchFlightOffers;
-  searchHotels: typeof searchHotelOffers;
   fetchWeather: typeof fetchWeatherRiskSummary;
 };
 
 const defaultDependencies: ItineraryAgentDependencies = {
   searchFlights: searchFlightOffers,
-  searchHotels: searchHotelOffers,
   fetchWeather: fetchWeatherRiskSummary,
 };
 
@@ -66,7 +60,6 @@ export const runItineraryAgent = async (
   }
 
   const destinationIata = destination.iataCode ?? state.userRequest.destinationIata;
-  const destinationCityCode = destination.cityCode ?? state.userRequest.destinationCityCode;
 
   const flightOptions: FlightOption[] =
     state.userRequest.originIata && destinationIata
@@ -79,15 +72,6 @@ export const runItineraryAgent = async (
         })
       : [];
 
-  const hotelOptions: HotelOption[] = destinationCityCode
-    ? await deps.searchHotels({
-        cityCode: destinationCityCode,
-        destinationQuery: destination.name,
-        checkInDate: state.userRequest.travelStartDate,
-        checkOutDate: state.userRequest.travelEndDate,
-        adults: state.userRequest.adults,
-      })
-    : [];
 
   const weatherRisks: WeatherRiskSummary = await deps.fetchWeather({
     destination: destination.name,
@@ -122,16 +106,14 @@ export const runItineraryAgent = async (
 
   return {
     flightOptions,
-    hotelOptions,
     weatherRisks,
     itineraryDraft,
     decisionLog: [
       makeDecisionLog({
         agent: "itinerary_agent",
-        inputSummary: "Fetched flights/hotels/weather and drafted daily itinerary",
+        inputSummary: "Fetched flights/weather and drafted daily itinerary",
         keyEvidence: [
           `flights=${flightOptions.length}`,
-          `hotels=${hotelOptions.length}`,
           `highRiskDays=${weatherRisks.highRiskDates.length}`,
         ],
         outputSummary: `Generated ${itineraryDraft.length}-day itinerary`,

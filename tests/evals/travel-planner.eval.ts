@@ -36,7 +36,6 @@ describe("travel planner eval", () => {
         checkpointer: createInMemoryCheckpointer(),
         itineraryAgentDependencies: {
           searchFlights: async () => [],
-          searchHotels: async () => [],
           fetchWeather: async () => ({
             location: "Seoul, South Korea",
             timezone: "Asia/Seoul",

@@ -31,17 +31,6 @@ const makeState = (budget: number): PlannerState => ({
       carriers: ["NH"],
     },
   ],
-  hotelOptions: [
-    {
-      hotelId: "H1",
-      name: "Hotel",
-      rating: 4.2,
-      checkInDate: "2026-07-01",
-      checkOutDate: "2026-07-03",
-      totalPrice: 300,
-      currency: "USD",
-    },
-  ],
   weatherRisks: null,
   itineraryDraft: [
     { date: "2026-07-01", theme: "museum", activities: ["A"] },

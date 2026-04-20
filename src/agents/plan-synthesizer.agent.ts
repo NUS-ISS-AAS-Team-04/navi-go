@@ -15,7 +15,6 @@ export const runPlanSynthesizerAgent = async (
   const blocked = state.safetyFlags.includes("BLOCKED_PROMPT_INJECTION");
   const selectedDestination = state.destinationCandidates[0]?.name ?? "Not resolved";
   const selectedFlightOfferId = state.flightOptions[0]?.offerId;
-  const selectedHotelId = state.hotelOptions[0]?.hotelId;
 
   const summary = blocked
     ? "Request blocked by risk guard due to prompt-injection patterns. No unsafe planning output generated."
@@ -29,7 +28,6 @@ export const runPlanSynthesizerAgent = async (
     summary,
     selectedDestination,
     selectedFlightOfferId,
-    selectedHotelId,
     itinerary: state.itineraryDraft,
     budget: state.budgetAssessment,
     packingList: state.packingList,

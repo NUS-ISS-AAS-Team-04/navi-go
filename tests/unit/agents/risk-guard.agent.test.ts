@@ -20,7 +20,6 @@ const baseState = (): PlannerState => ({
   preferences: null,
   destinationCandidates: [],
   flightOptions: [],
-  hotelOptions: [],
   weatherRisks: null,
   itineraryDraft: [],
   budgetAssessment: null,

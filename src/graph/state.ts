@@ -26,8 +26,8 @@ export const PreferencesSchema = z.object({
 export const DestinationCandidateSchema = z.object({
   name: z.string(),
   country: z.string(),
-  iataCode: z.string().regex(/^[A-Z]{3}$/).optional(),
-  cityCode: z.string().regex(/^[A-Z]{3}$/).optional(),
+  iataCode: z.string().regex(/^[A-Z]{3}$/).nullable(),
+  cityCode: z.string().regex(/^[A-Z]{3}$/).nullable(),
   rationale: z.string(),
 });
 
@@ -58,7 +58,6 @@ export const FinalPlanSchema = z.object({
   summary: z.string(),
   selectedDestination: z.string(),
   selectedFlightOfferId: z.string().optional(),
-  selectedHotelId: z.string().optional(),
   itinerary: z.array(ItineraryDaySchema),
   budget: BudgetAssessmentSchema,
   packingList: z.array(z.string()),
@@ -84,15 +83,6 @@ export type FlightOption = {
   carriers: string[];
 };
 
-export type HotelOption = {
-  hotelId: string;
-  name: string;
-  rating: number | undefined;
-  checkInDate: string;
-  checkOutDate: string;
-  totalPrice: number;
-  currency: string;
-};
 
 export type DailyWeather = {
   date: string;
@@ -126,10 +116,6 @@ export const PlannerStateAnnotation = Annotation.Root({
     default: () => [],
   }),
   flightOptions: Annotation<FlightOption[]>({
-    reducer: replaceReducer,
-    default: () => [],
-  }),
-  hotelOptions: Annotation<HotelOption[]>({
     reducer: replaceReducer,
     default: () => [],
   }),

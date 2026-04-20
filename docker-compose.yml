@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: navi-go-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: navi_go
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d navi_go"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - navi_go_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  navi_go_postgres_data:

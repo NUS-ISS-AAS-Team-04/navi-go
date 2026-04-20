@@ -44,17 +44,6 @@ describe("planner graph integration", () => {
             carriers: ["NH"],
           },
         ],
-        searchHotels: async () => [
-          {
-            hotelId: "H-1",
-            name: "Tokyo Inn",
-            rating: 4.1,
-            checkInDate: "2026-07-01",
-            checkOutDate: "2026-07-04",
-            totalPrice: 480,
-            currency: "USD",
-          },
-        ],
         fetchWeather: async () => ({
           location: "Tokyo, Japan",
           timezone: "Asia/Tokyo",
