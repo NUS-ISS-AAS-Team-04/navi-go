@@ -1,6 +1,6 @@
-# 4. Explainable & Responsible AI Practices
+# 4. 可解释与负责任 AI 实践
 
-本文档基于当前仓库实现（`src/**`、`tests/**`、`.github/workflows/**`）总结 NaviGo 的可解释与负责任 AI 实践。
+本文档基于当前仓库实现（`src/**`、`tests/**`、`.github/workflows/**`、`scripts/**`）总结 NaviGo 的可解释与负责任 AI 实践。
 
 ## 4.1 可解释性设计
 
@@ -19,15 +19,17 @@
 
 ### 2) 结构化输出约束
 
-需要 LLM 的两个 agent：
+需要 LLM 的 agent 都使用 `withStructuredOutput(...)` + Zod schema，避免自由文本直接进入状态：
 
-- `preference_agent`
-- `destination_agent`
-
-都使用 `withStructuredOutput(...)` + Zod schema，避免自由文本直接进入状态：
-
-- `PreferencesSchema`
-- `DestinationSuggestionsSchema` / `DestinationCandidateSchema`
+- `ExtractedRequestSchema`（requirement_parser）
+- `FormCompletionSchema`（form_completer）
+- `RiskGuardSchema`（risk_guard）
+- `PreferencesSchema`（preference_agent）
+- `DestinationSuggestionsSchema` / `DestinationCandidateSchema`（destination_agent）
+- `ItineraryDraftSchema`（itinerary_agent）
+- `BudgetAssessmentSchema`（budget_agent）
+- `PackingListSchema`（packing_agent）
+- `PlanSynthesisSchema`（plan_synthesizer）
 
 ### 3) 边界层统一校验
 
@@ -42,19 +44,24 @@ Zod 校验覆盖：
 
 ### 1) 用户意图优先
 
-`preference_agent` 中，如果用户在 `userRequest.interests` 里明确给出了兴趣项，会覆盖模型抽取的兴趣，减少“模型擅自改写用户偏好”的风险。
+- `preference_agent` 中，如果用户在 `userRequest.interests` 里明确给出了兴趣项，会覆盖模型抽取的兴趣，减少“模型擅自改写用户偏好”的风险。
+- `destination_agent` 中，用户显式提供的目的地（hint + city code + IATA）会作为 fallback 候选前置，确保用户意图不被忽略。
 
 ### 2) 明确风险暴露，不静默处理
 
-- `risk_guard` 会把检测到的风险写入 `safetyFlags`
-- `budget_agent` 超预算时写入 `BUDGET_EXCEEDED`
-- `plan_synthesizer` 会把安全标记带入最终输出
+- `risk_guard` 会把检测到的风险写入 `safetyFlags`（规则层 + LLM 语义层双重扫描）。
+- `budget_agent` 超预算时写入 `BUDGET_EXCEEDED`。
+- `plan_synthesizer` 会把安全标记带入最终输出。
 
 即使计划可继续生成，风险也不会被隐藏。
 
 ### 3) 受控拒答路径
 
 当检测到提示注入（`BLOCKED_PROMPT_INJECTION`）时，路由会直接进入 `plan_synthesizer` 生成安全拒答摘要，而不是继续执行完整规划链路。
+
+### 4) 自然语言交互的透明性
+
+`form_completer` 在缺少必填字段时，不会默默猜测或填充，而是生成 1–2 条自然语言澄清问题返回给客户端，由用户确认后再继续。这避免了模型擅自推断用户未明确表达的约束。
 
 ## 4.3 可追溯性与审计
 
@@ -90,15 +97,17 @@ Zod 校验覆盖：
 
 ### 已实现优势
 
-- 有明确安全闸门（risk guard）
-- 有结构化输出与 schema 约束
+- 有明确安全闸门（risk guard，规则 + LLM 双层）
+- 有结构化输出与 schema 约束（所有 LLM agent）
 - 有审计日志（decisionLog）
 - 有线程级可追溯能力（checkpoint + getState）
+- 有自然语言交互的受控补全机制（form_completer 澄清问题）
 
 ### 已知边界
 
-- 提示注入检测当前是规则匹配（regex），覆盖常见模式但不是完备防护
-- 最终计划摘要的安全检测也是规则匹配
-- 预算模型是启发式估算，不是实时报价结算模型
+- 提示注入检测的规则层覆盖常见模式但不是完备防护；LLM 语义层是主要补充，但仍有逃逸可能。
+- 最终计划摘要的安全检测也是规则匹配 + LLM 扫描。
+- 预算模型由 LLM 估算，不是实时报价结算模型，存在估算偏差。
+- 行程生成依赖 LLM，结构合法不等于语义一定正确。
 
 以上边界均可从现有代码直接观察到。

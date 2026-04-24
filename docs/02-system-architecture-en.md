@@ -14,17 +14,24 @@ The system is designed around three layers:
 +------------------+------------------+------------------+
 |   Interface      |   Orchestration  |   Agent & Tool   |
 +------------------+------------------+------------------+
-| API Routes       | StateGraph       | Preference Agent |
-| (plan.route.ts)  | (builder.ts)     | (preference.     |
+| API Routes       | StateGraph       | Requirement      |
+| (plan.route.ts)  | (builder.ts)     | Parser           |
+|                  |                  | (req-parser.     |
+| CLI Runner       | PlannerState     |  agent.ts)       |
+| (run-plan.ts)    | (state.ts)       | Form Completer   |
+|                  |                  | (form-completer. |
+| Fastify Server   | Router           |  agent.ts)       |
+| (server.ts)      | (routes.ts)      | Preference Agent |
+|                  |                  | (preference.     |
+|                  | Checkpointer      |  agent.ts)       |
+|                  | (checkpointer.ts)| Destination Agent|
+|                  |                  | (destination.    |
 |                  |                  |  agent.ts)       |
-| CLI Runner       | PlannerState     | Destination Agent|
-| (run-plan.ts)    | (state.ts)       | (destination.    |
+|                  |                  | Itinerary Agent  |
+|                  |                  | (itinerary.      |
 |                  |                  |  agent.ts)       |
-| Fastify Server   | Router           | Itinerary Agent  |
-| (server.ts)      | (routes.ts)      | (itinerary.      |
-|                  |                  |  agent.ts)       |
-|                  | Checkpointer      | Budget Agent     |
-|                  | (checkpointer.ts)| (budget.agent.ts)|
+|                  |                  | Budget Agent     |
+|                  |                  | (budget.agent.ts)|
 |                  |                  | Packing Agent    |
 |                  |                  | (packing.agent.ts|
 |                  |                  | )                |
@@ -56,14 +63,20 @@ The graph state is defined in `src/graph/state.ts` using LangGraph `Annotation.R
 | `userRequest` | `UserRequest \| null` | Replace | Parsed user input with dates, budget, IATA codes, interests |
 | `preferences` | `Preferences \| null` | Replace | Extracted travel style, pace, accommodation tier |
 | `destinationCandidates` | `DestinationCandidate[]` | Replace | Ranked destinations with rationale |
-| `flightOptions` | `FlightOption[]` | Replace | Live flight offers from Duffel |
+| `flightOptions` | `FlightOption[]` | Replace | Live outbound flight offers from Duffel |
+| `returnFlightOptions` | `FlightOption[]` | Replace | Live return flight offers from Duffel |
 | `weatherRisks` | `WeatherRiskSummary \| null` | Replace | Daily weather forecasts with risk levels |
 | `itineraryDraft` | `ItineraryDay[]` | Replace | Day-by-day activities and themes |
 | `budgetAssessment` | `BudgetAssessment \| null` | Replace | Estimated total vs. limit with tips |
 | `packingList` | `string[]` | Replace | Generated packing items |
+| `selectedFlightOfferId` | `string \| null` | Replace | Recommended outbound flight offer ID |
+| `selectedReturnFlightOfferId` | `string \| null` | Replace | Recommended return flight offer ID |
 | `safetyFlags` | `string[]` | Set union | Accumulated risk flags (deduplicated) |
 | `decisionLog` | `DecisionLogEntry[]` | Concat | Auditable trace of every agent step |
 | `finalPlan` | `FinalPlan \| null` | Replace | Synthesized final artifact |
+| `naturalLanguage` | `string \| null` | Replace | Raw natural-language user input |
+| `parsedRequest` | `ParsedRequest \| null` | Replace | Partially extracted request fields |
+| `pendingQuestions` | `string[] \| null` | Replace | Clarifying questions for missing fields |
 
 ### Replace vs. Union Reducers
 
@@ -77,13 +90,17 @@ Most fields use a **replace reducer** (`(_, next) => next`) because agents produ
 const graphBuilder = new StateGraph(PlannerStateAnnotation)
   .addNode("risk_guard", runRiskGuardAgent)
   .addNode("supervisor", runSupervisorNode)
-  .addNode("preference_agent", (state) => runPreferenceAgent(state, { model }))
-  .addNode("destination_agent", (state) => runDestinationAgent(state, { model }))
-  .addNode("itinerary_agent", (state) => runItineraryAgent(state, deps.itineraryAgentDependencies))
+  .addNode("preference_agent", runPreferenceAgent)
+  .addNode("destination_agent", runDestinationAgent)
+  .addNode("itinerary_agent", runItineraryAgent)
   .addNode("budget_agent", runBudgetAgent)
   .addNode("packing_agent", runPackingAgent)
   .addNode("plan_synthesizer", runPlanSynthesizerAgent)
-  .addEdge(START, "risk_guard")
+  .addNode("requirement_parser", runRequirementParser)
+  .addNode("form_completer", runFormCompleter)
+  .addConditionalEdges(START, routeFromStart)
+  .addEdge("requirement_parser", "form_completer")
+  .addConditionalEdges("form_completer", routeFromFormCompleter)
   .addConditionalEdges("risk_guard", routeFromRiskGuard)
   .addConditionalEdges("supervisor", routeFromSupervisor)
   .addEdge("preference_agent", "risk_guard")
@@ -98,26 +115,39 @@ Every agent edge loops back through `risk_guard`, ensuring continuous safety sca
 
 ## 2.4 Routing Logic
 
-The router (`src/graph/routes.ts`) implements supervisor-style conditional edges:
+The router (`src/graph/routes.ts`) implements state-driven conditional edges:
+
+### `routeFromStart`
+
+- If `naturalLanguage` is present and `parsedRequest` is missing → `requirement_parser`
+- If `parsedRequest` is present and `userRequest` is missing → `form_completer`
+- If `userRequest` is present → `risk_guard`
+- Otherwise → `END`
+
+### `routeFromFormCompleter`
+
+- If `pendingQuestions` is non-empty → `END` (wait for user answers via `/plan/chat/resume`)
+- If `userRequest` is assembled → `risk_guard`
+- Otherwise → `END`
 
 ### `routeFromRiskGuard`
 
-- If `BLOCKED_PROMPT_INJECTION` is present and no final plan exists, route directly to `plan_synthesizer` to produce a safe refusal.
-- If `finalPlan` is already set, route to `END`.
-- Otherwise, route to `supervisor`.
+- If `isBlockedByRiskGuard(state)` is true and no final plan exists → `plan_synthesizer` (safe refusal)
+- If `finalPlan` is already set → `END`
+- Otherwise → `supervisor`
 
 ### `routeFromSupervisor`
 
 Checks state fields in dependency order:
 
-1. No `userRequest` -> `END`
-2. No `preferences` -> `preference_agent`
-3. No `destinationCandidates` -> `destination_agent`
-4. Missing `itineraryDraft` or `weatherRisks` -> `itinerary_agent`
-5. No `budgetAssessment` -> `budget_agent`
-6. Empty `packingList` -> `packing_agent`
-7. No `finalPlan` -> `plan_synthesizer`
-8. Otherwise -> `END`
+1. No `userRequest` → `END`
+2. No `preferences` → `preference_agent`
+3. No `destinationCandidates` → `destination_agent`
+4. Missing `itineraryDraft` or `weatherRisks` → `itinerary_agent`
+5. No `budgetAssessment` → `budget_agent`
+6. Empty `packingList` → `packing_agent`
+7. No `finalPlan` → `plan_synthesizer`
+8. Otherwise → `END`
 
 ## 2.5 Persistence & Checkpointing
 
@@ -152,17 +182,19 @@ Implemented in `src/interfaces/api/server.ts` and `src/interfaces/api/routes/pla
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/plan` | `POST` | Invoke planner graph with a `userRequest` and `threadId` |
+| `/plan` | `POST` | Invoke planner graph with a structured `userRequest` and `threadId` |
+| `/plan/chat` | `POST` | Submit natural-language request; may return `pendingQuestions` |
+| `/plan/chat/resume` | `POST` | Answer pending clarifying questions and continue planning |
 | `/plan/:threadId` | `GET` | Retrieve checkpointed state by thread |
 | `/health` | `GET` | Health check |
 
-The POST handler validates payloads with Zod, catches `ToolError` and maps it to `502 Bad Gateway`, and returns `finalPlan`, `safetyFlags`, and `decisionLog`.
+The POST handlers validate payloads with Zod, catch `ToolError` and map it to `502 Bad Gateway`, and return `finalPlan`, `safetyFlags`, and `decisionLog`.
 
 ### CLI Runner
 
 Implemented in `src/interfaces/cli/run-plan.ts`:
 
-Accepts flags: `--thread-id`, `--request`, `--origin`, `--destination-hint`, `--destination-city`, `--destination-iata`, `--start-date`, `--end-date`, `--budget`, `--adults`, `--children`, `--interests`.
+Accepts flags: `--thread-id`, `--request`, `--user-id`, `--origin`, `--destination-hint`, `--destination-city`, `--destination-iata`, `--start-date`, `--end-date`, `--budget`, `--adults`, `--children`, `--interests`.
 
 Prints final plan as formatted JSON to stdout.
 
@@ -173,7 +205,7 @@ Prints final plan as formatted JSON to stdout.
 All external API calls go through `requestJson()` in `src/tools/common/http.ts`, which provides:
 
 - **Timeout**: 15s default with `AbortController`
-- **Retry**: 2 retries with exponential backoff (150ms * attempt)
+- **Retry**: 2 retries with exponential backoff (150ms × attempt)
 - **Typed errors**: `ToolError` with codes (`AUTH_ERROR`, `RATE_LIMIT`, `UPSTREAM_TIMEOUT`, `UPSTREAM_BAD_RESPONSE`, `NETWORK_ERROR`, `VALIDATION_ERROR`)
 
 ### Schema Validation
@@ -187,3 +219,9 @@ Zod schemas guard:
 ### Fail-Safe Agent Behavior
 
 Every agent returns `{}` (no-op) when its required inputs are missing, making the graph resilient to partial states and out-of-order execution.
+
+## 2.8 Rate Limiting & Static Assets
+
+The Fastify server registers:
+- `@fastify/rate-limit` with 100 requests per minute.
+- `@fastify/static` to serve files from the `public/` directory (e.g., `index.html` at `/`).

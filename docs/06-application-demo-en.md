@@ -2,6 +2,8 @@
 
 NaviGo exposes two interfaces over the identical planner graph: an HTTP API and a CLI runner. Both support thread-level checkpointing, so planning sessions can be initiated, polled, and resumed.
 
+The API supports **structured requests** (`POST /plan`) and **natural-language chat** (`POST /plan/chat`, `POST /plan/chat/resume`) with clarifying questions.
+
 ## 6.1 Prerequisites
 
 Before running any demo, ensure you have:
@@ -17,7 +19,7 @@ Required for live flight/weather:
 
 ## 6.2 CLI Demo
 
-The CLI is the fastest way to test the planner end-to-end.
+The CLI is the fastest way to test the planner end-to-end with a structured request.
 
 ### Basic Usage
 
@@ -43,6 +45,7 @@ npm run dev -- --cli \
 |------|---------|-------------|
 | `--thread-id` | `cli-thread` | Checkpoint thread identifier |
 | `--request` | `"Plan a balanced 4-day city trip..."` | Free-text travel request |
+| `--user-id` | `cli-user` | User identifier |
 | `--origin` | - | Origin IATA code (e.g., `SFO`) |
 | `--destination-hint` | `Tokyo` | Desired destination name |
 | `--destination-city` | `TYO` | Destination city code |
@@ -63,18 +66,38 @@ npm run dev -- --cli \
     "summary": "Prepared 3-day itinerary for Tokyo. Estimated spend 2350.00 within budget.",
     "selectedDestination": "Tokyo",
     "selectedFlightOfferId": "off_0000ABCDEF",
+    "selectedReturnFlightOfferId": "off_0000RETURN01",
     "itinerary": [
       {
         "date": "2026-07-01",
-        "theme": "food in Asakusa",
+        "theme": "Arrival in Tokyo",
         "activities": [
-          "Day 1: food highlight tour at Asakusa",
-          "Neighborhood exploration around Ueno Park",
-          "Evening local food walk near Tsukiji Outer Market"
+          "Arrive at HND",
+          "Check-in at hotel",
+          "Evening walk in Asakusa"
         ],
-        "weatherNote": "Weather acceptable for outdoor activities around Asakusa"
+        "weatherNote": "Clear and warm"
       },
-      // ... additional days
+      {
+        "date": "2026-07-02",
+        "theme": "Food and museums",
+        "activities": [
+          "Tsukiji Outer Market breakfast",
+          "Tokyo National Museum",
+          "Ramen dinner in Shibuya"
+        ],
+        "weatherNote": "Rain expected; carry umbrella"
+      },
+      {
+        "date": "2026-07-03",
+        "theme": "Departure",
+        "activities": [
+          "Last-minute shopping in Ginza",
+          "Airport transfer",
+          "Fly home"
+        ],
+        "weatherNote": "Clear"
+      }
     ],
     "budget": {
       "estimatedTotal": 2350,
@@ -88,9 +111,9 @@ npm run dev -- --cli \
       "Passport and travel documents",
       "Phone charger and power adapter",
       "Daily medication kit",
-      "Sunscreen",
-      "Reusable water bottle",
-      "Comfortable walking shoes"
+      "Compact umbrella",
+      "Comfortable walking shoes",
+      "Sunscreen"
     ],
     "safetyFlags": []
   },
@@ -116,9 +139,17 @@ Expected output:
   "finalPlan": {
     "summary": "Request blocked by risk guard due to prompt-injection patterns. No unsafe planning output generated.",
     "selectedDestination": "Not resolved",
-    // ... empty/default fields
+    "itinerary": [],
+    "budget": {
+      "estimatedTotal": 0,
+      "budgetLimit": 2200,
+      "withinBudget": false,
+      "optimizationTips": []
+    },
+    "packingList": [],
+    "safetyFlags": ["BLOCKED_PROMPT_INJECTION:LLM_BLOCKED"]
   },
-  "safetyFlags": ["BLOCKED_PROMPT_INJECTION"]
+  "safetyFlags": ["BLOCKED_PROMPT_INJECTION:LLM_BLOCKED"]
 }
 ```
 
@@ -132,7 +163,7 @@ npm run dev
 
 Server listens on `0.0.0.0:3000` by default.
 
-### Create a Plan
+### Structured Plan
 
 ```bash
 curl -X POST http://localhost:3000/plan \
@@ -166,6 +197,7 @@ curl -X POST http://localhost:3000/plan \
     "summary": "Prepared 4-day itinerary for Rome. Estimated spend 1750.00 within budget.",
     "selectedDestination": "Rome",
     "selectedFlightOfferId": "off_0000XYZ123",
+    "selectedReturnFlightOfferId": "off_0000RETURN99",
     "itinerary": [ /* ... */ ],
     "budget": {
       "estimatedTotal": 1750,
@@ -186,6 +218,74 @@ curl -X POST http://localhost:3000/plan \
     { "agent": "packing_agent", /* ... */ },
     { "agent": "plan_synthesizer", /* ... */ }
   ]
+}
+```
+
+### Chat Planning (Natural Language)
+
+Start a chat session with an incomplete request:
+
+```bash
+curl -X POST http://localhost:3000/plan/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "threadId": "chat-demo-1",
+    "scenario": "chat-demo",
+    "naturalLanguage": "I want to visit Rome and see historical sites"
+  }'
+```
+
+### Chat Response (Awaiting Input)
+
+```json
+{
+  "threadId": "chat-demo-1",
+  "status": "awaiting_input",
+  "pendingQuestions": [
+    "What is your planned departure date (format: YYYY-MM-DD)?",
+    "What is your return date (format: YYYY-MM-DD)?"
+  ],
+  "parsedRequest": {
+    "requestText": "I want to visit Rome and see historical sites",
+    "destinationHint": "Rome",
+    "interests": ["history"]
+  },
+  "decisionLog": [
+    { "agent": "requirement_parser", /* ... */ },
+    { "agent": "form_completer", /* ... */ }
+  ]
+}
+```
+
+### Resume Chat with Answers
+
+```bash
+curl -X POST http://localhost:3000/plan/chat/resume \
+  -H "Content-Type: application/json" \
+  -d '{
+    "threadId": "chat-demo-1",
+    "scenario": "chat-demo",
+    "answers": {
+      "travelStartDate": "2026-08-10",
+      "travelEndDate": "2026-08-13",
+      "budget": 1800,
+      "adults": 2
+    }
+  }'
+```
+
+### Resume Response (Complete)
+
+```json
+{
+  "threadId": "chat-demo-1",
+  "status": "complete",
+  "finalPlan": {
+    "summary": "4-day Rome history trip planned within budget.",
+    /* ... */
+  },
+  "safetyFlags": [],
+  "decisionLog": [ /* ... */ ]
 }
 ```
 
@@ -268,7 +368,7 @@ curl -X POST http://localhost:3000/plan \
   -H "Content-Type: application/json" \
   -d '{"threadId": "resume-demo", "userRequest": { ... }}'
 
-# Second call with empty input resumes from checkpoint
+# Second call with the same threadId returns from checkpoint
 curl -X POST http://localhost:3000/plan \
   -H "Content-Type: application/json" \
   -d '{"threadId": "resume-demo", "userRequest": { ... }}'
