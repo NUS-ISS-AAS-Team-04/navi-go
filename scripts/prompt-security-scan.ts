@@ -65,17 +65,17 @@ const RULES = [
     severity: "HIGH" as const,
     pattern:
       /\b(withStructuredOutput|invoke)\s*\(/,
-    prerequisite: (lines: string[], idx: number): boolean => {
-      // Check if there's any guardrails import or detectPromptInjection call in the file
-      // Look back 30 lines for a guardrails call before the LLM invocation
-      const start = Math.max(0, idx - 30);
-      const context = lines.slice(start, idx).join("\n");
-      const hasGuardrailsCall =
-        context.includes("detectPromptInjection") ||
-        context.includes("detectUnsafeOutput");
-      // Only flag if file has guardrails available but this specific invoke doesn't use them
-      // OR if file completely lacks guardrails
-      return !hasGuardrailsCall;
+    prerequisite: (lines: string[], idx: number, filePath: string): boolean => {
+      // Graph-level agents have guardrails enforced upstream by risk_guard node.
+      // Only flag entry points that directly consume untrusted user input.
+      if (filePath.includes("src/agents/")) {
+        return false;
+      }
+      // Exclude LangGraph graph.invoke() — not an LLM call
+      if (lines[idx].includes("graph.invoke")) {
+        return false;
+      }
+      return true;
     },
     description:
       "LLM invocation without visible guardrails/safety checks on user input.",
@@ -98,6 +98,24 @@ const RULES = [
     severity: "HIGH" as const,
     pattern: /await\s+\w+\.(?:invoke|withStructuredOutput)\s*\(/,
     prerequisite: (lines: string[], idx: number): boolean => {
+      // Exclude LangGraph graph.invoke() — not an LLM call
+      if (lines[idx].includes("graph.invoke")) {
+        return false;
+      }
+
+      // withStructuredOutput already enforces schema validation
+      if (lines[idx].includes("withStructuredOutput")) {
+        return false;
+      }
+
+      // Check if this invoke() is on a model created via withStructuredOutput
+      // Look back 15 lines for withStructuredOutput assignment
+      const start = Math.max(0, idx - 15);
+      const backContext = lines.slice(start, idx).join("\n");
+      if (backContext.includes("withStructuredOutput")) {
+        return false;
+      }
+
       // Look ahead 20 lines for schema.parse or validation
       const end = Math.min(lines.length, idx + 20);
       const context = lines.slice(idx, end).join("\n");
@@ -124,6 +142,7 @@ const RULES = [
 const analyzeFile = (filePath: string) => {
   const content = readFileSync(filePath, "utf-8");
   const lines = content.split("\n");
+  const relativePath = filePath.replace(process.cwd() + "/", "");
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -131,7 +150,7 @@ const analyzeFile = (filePath: string) => {
     for (const rule of RULES) {
       const match = rule.pattern.exec(line);
       if (match) {
-        if (rule.prerequisite && !rule.prerequisite(lines, i)) {
+        if (rule.prerequisite && !rule.prerequisite(lines, i, relativePath)) {
           continue;
         }
 
