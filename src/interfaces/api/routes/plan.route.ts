@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
+import { z, ZodError } from "zod";
 
 import type { PlannerCompiledGraph } from "../../../graph/builder.js";
 import {
@@ -40,6 +40,14 @@ const handleGraphError = (
     send: (payload: unknown) => void;
   },
 ): void => {
+  if (error instanceof ZodError) {
+    reply.status(400).send({
+      error: "VALIDATION_ERROR",
+      issues: error.issues.map((i) => ({ path: i.path, message: i.message })),
+    });
+    return;
+  }
+
   if (error instanceof ToolError) {
     reply.status(502).send({
       error: error.code,
@@ -61,9 +69,8 @@ export const registerPlanRoutes = (
   graph: PlannerCompiledGraph,
 ): void => {
   app.post("/plan", async (request, reply) => {
-    const payload = PlanPayloadSchema.parse(request.body);
-
     try {
+      const payload = PlanPayloadSchema.parse(request.body);
       const result = await graph.invoke(
         {
           userRequest: payload.userRequest,
@@ -90,9 +97,8 @@ export const registerPlanRoutes = (
   });
 
   app.post("/plan/chat", async (request, reply) => {
-    const payload = ChatPayloadSchema.parse(request.body);
-
     try {
+      const payload = ChatPayloadSchema.parse(request.body);
       const result = await graph.invoke(
         {
           naturalLanguage: payload.naturalLanguage,
@@ -131,9 +137,8 @@ export const registerPlanRoutes = (
   });
 
   app.post("/plan/chat/resume", async (request, reply) => {
-    const payload = ChatResumePayloadSchema.parse(request.body);
-
     try {
+      const payload = ChatResumePayloadSchema.parse(request.body);
       const snapshot = await graph.getState({
         configurable: { thread_id: payload.threadId },
       });
@@ -146,6 +151,12 @@ export const registerPlanRoutes = (
         {
           parsedRequest: merged,
           pendingQuestions: [],
+          finalPlan: null,
+          itineraryDraft: [],
+          budgetAssessment: null,
+          packingList: [],
+          selectedFlightOfferId: null,
+          selectedReturnFlightOfferId: null,
         },
         {
           configurable: { thread_id: payload.threadId },
@@ -183,19 +194,23 @@ export const registerPlanRoutes = (
   });
 
   app.get("/plan/:threadId", async (request, reply) => {
-    const params = ThreadParamsSchema.parse(request.params);
-    const snapshot = await graph.getState({
-      configurable: {
-        thread_id: params.threadId,
-      },
-    });
+    try {
+      const params = ThreadParamsSchema.parse(request.params);
+      const snapshot = await graph.getState({
+        configurable: {
+          thread_id: params.threadId,
+        },
+      });
 
-    return reply.send({
-      threadId: params.threadId,
-      next: snapshot.next,
-      values: snapshot.values,
-      metadata: snapshot.metadata,
-      createdAt: snapshot.createdAt,
-    });
+      return reply.send({
+        threadId: params.threadId,
+        next: snapshot.next,
+        values: snapshot.values,
+        metadata: snapshot.metadata,
+        createdAt: snapshot.createdAt,
+      });
+    } catch (error) {
+      handleGraphError(error, request, reply);
+    }
   });
 };

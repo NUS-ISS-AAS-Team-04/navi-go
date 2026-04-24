@@ -1,82 +1,78 @@
-import { makeDecisionLog, type PlannerState } from "../graph/state.js";
-import { pickRecommendedFlightOption } from "./flight-option-selection.js";
+import type { ChatOpenAI } from "@langchain/openai";
+
+import { BudgetAssessmentSchema, makeDecisionLog, type PlannerState } from "../graph/state.js";
+
+export type BudgetAgentDependencies = {
+  model: ChatOpenAI;
+};
 
 export const runBudgetAgent = async (
   state: PlannerState,
+  deps: BudgetAgentDependencies,
 ): Promise<Partial<PlannerState>> => {
   if (!state.userRequest || state.itineraryDraft.length === 0) {
     return {};
   }
 
-  const recommendedFlight = pickRecommendedFlightOption(
-    state.flightOptions,
-    state.userRequest.travelStartDate,
+  const selectedFlight = state.flightOptions.find(
+    (f) => f.offerId === state.selectedFlightOfferId,
   );
-  const selectedFlightPrice = recommendedFlight?.totalPrice ?? 0;
+  const selectedFlightPrice = selectedFlight?.totalPrice ?? 0;
 
-  const recommendedReturnFlight = pickRecommendedFlightOption(
-    state.returnFlightOptions,
-    state.userRequest.travelEndDate,
+  const selectedReturnFlight = state.returnFlightOptions.find(
+    (f) => f.offerId === state.selectedReturnFlightOfferId,
   );
-  const selectedReturnFlightPrice = recommendedReturnFlight?.totalPrice ?? 0;
+  const selectedReturnFlightPrice = selectedReturnFlight?.totalPrice ?? 0;
+
+  const structuredModel = deps.model.withStructuredOutput(BudgetAssessmentSchema, {
+    name: "BudgetAssessment",
+  });
 
   const tripDays = state.itineraryDraft.length;
   const tripNights = Math.max(tripDays - 1, 0);
-  const nightlyRateByPreference = {
-    budget: 90,
-    midrange: 160,
-    premium: 300,
-  } as const;
   const accommodationPreference =
     state.preferences?.accommodationPreference ?? "midrange";
-  const lodgingEstimate =
-    nightlyRateByPreference[accommodationPreference] * tripNights;
-  const dailySpendEstimate =
-    (state.userRequest.adults * 85 + state.userRequest.children * 45) *
-    state.itineraryDraft.length;
 
-  const estimatedTotal =
-    selectedFlightPrice +
-    selectedReturnFlightPrice +
-    lodgingEstimate +
-    dailySpendEstimate;
+  const generated = await structuredModel.invoke(`
+You are a travel budget analyst. Evaluate the following trip against the user's budget.
 
-  const withinBudget = estimatedTotal <= state.userRequest.budget;
+User budget limit: ${state.userRequest.budget}
+Trip duration: ${tripDays} days, ${tripNights} nights
+Travelers: ${state.userRequest.adults} adults, ${state.userRequest.children} children
+Accommodation preference: ${accommodationPreference}
+Selected outbound flight: ${selectedFlight ? `${selectedFlight.offerId} at ${selectedFlight.totalPrice} ${selectedFlight.currency}` : "none"}
+Selected return flight: ${selectedReturnFlight ? `${selectedReturnFlight.offerId} at ${selectedReturnFlight.totalPrice} ${selectedReturnFlight.currency}` : "none"}
+Flight cost total: ${selectedFlightPrice + selectedReturnFlightPrice}
+Itinerary days:
+${state.itineraryDraft.map((d) => `- ${d.date}: ${d.theme}`).join("\n")}
 
-  const optimizationTips = withinBudget
-    ? [
-        "Budget is within limit; keep a contingency reserve for transfers.",
-      ]
-    : [
-        "Select lower-cost accommodation tier.",
-        "Reduce paid activities on peak-price days.",
-        "Consider nearby alternate airport for cheaper flights.",
-      ];
+Return a structured budget assessment with:
+- estimatedTotal: your best estimate of total trip cost in the same currency as the budget
+- budgetLimit: ${state.userRequest.budget}
+- withinBudget: whether estimatedTotal <= budgetLimit
+- optimizationTips: 1-3 actionable tips if over budget, or a reassurance tip if within budget
+`);
+
+  const budgetAssessment = BudgetAssessmentSchema.parse(generated);
 
   return {
-    budgetAssessment: {
-      estimatedTotal,
-      budgetLimit: state.userRequest.budget,
-      withinBudget,
-      optimizationTips,
-    },
+    budgetAssessment,
     decisionLog: [
       makeDecisionLog({
         agent: "budget_agent",
-        inputSummary: "Evaluated trip draft against budget constraints",
+        inputSummary: "Evaluated trip draft against budget constraints via LLM",
         keyEvidence: [
-          `estimatedTotal=${estimatedTotal.toFixed(2)}`,
+          `estimatedTotal=${budgetAssessment.estimatedTotal.toFixed(2)}`,
           `budget=${state.userRequest.budget.toFixed(2)}`,
-          `lodgingEstimate=${lodgingEstimate.toFixed(2)}`,
           `accommodationPreference=${accommodationPreference}`,
-          `selectedFlightOfferId=${recommendedFlight?.offerId ?? "none"}`,
-        `selectedReturnFlightOfferId=${recommendedReturnFlight?.offerId ?? "none"}`,
-        `flightCost=${(selectedFlightPrice + selectedReturnFlightPrice).toFixed(2)}`,
+          `selectedFlightOfferId=${selectedFlight?.offerId ?? "none"}`,
+          `selectedReturnFlightOfferId=${selectedReturnFlight?.offerId ?? "none"}`,
+          `flightCost=${(selectedFlightPrice + selectedReturnFlightPrice).toFixed(2)}`,
         ],
-        outputSummary: withinBudget
+        outputSummary: budgetAssessment.withinBudget
           ? "Trip is currently budget-feasible"
           : "Trip exceeds budget and needs optimization",
-        riskFlags: withinBudget ? [] : ["BUDGET_EXCEEDED"],
+        riskFlags: budgetAssessment.withinBudget ? [] : ["BUDGET_EXCEEDED"],
       }),
     ],
   };

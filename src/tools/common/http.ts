@@ -64,7 +64,7 @@ export const requestJson = async <TResponse>(
         signal: abort.signal,
       };
 
-      if (options.body !== undefined) {
+      if (options.body != null) {
         requestInit.body =
           typeof options.body === "string"
             ? options.body

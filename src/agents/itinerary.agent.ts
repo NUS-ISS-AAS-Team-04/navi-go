@@ -1,94 +1,33 @@
+import type { ChatOpenAI } from "@langchain/openai";
+import { z } from "zod";
+
 import { searchFlightOffers } from "../tools/flights/duffel-flight.tool.js";
 import { fetchWeatherRiskSummary } from "../tools/weather/openmeteo-weather.tool.js";
 import {
+  ItineraryDaySchema,
   makeDecisionLog,
-  type FlightOption,
-  type ItineraryDay,
   type PlannerState,
-  type WeatherRiskSummary,
 } from "../graph/state.js";
-import { PLACE_ANCHORS_BY_CITY_CODE } from "../data/place-anchors.js";
-import { getFlightCalendarDate, pickRecommendedFlightOption } from "./flight-option-selection.js";
+import { pickRecommendedFlightOption } from "./flight-option-selection.js";
 
 export type ItineraryAgentDependencies = {
+  model: ChatOpenAI;
   searchFlights: typeof searchFlightOffers;
   fetchWeather: typeof fetchWeatherRiskSummary;
 };
 
-const defaultDependencies: ItineraryAgentDependencies = {
+export const defaultItineraryDeps: Omit<ItineraryAgentDependencies, "model"> = {
   searchFlights: searchFlightOffers,
   fetchWeather: fetchWeatherRiskSummary,
 };
 
-const enumerateDates = (startDate: string, endDate: string): string[] => {
-  const dates: string[] = [];
-  const start = new Date(`${startDate}T00:00:00Z`);
-  const end = new Date(`${endDate}T00:00:00Z`);
-
-  for (let current = new Date(start); current <= end; current.setUTCDate(current.getUTCDate() + 1)) {
-    dates.push(current.toISOString().slice(0, 10));
-  }
-
-  return dates;
-};
-
-const buildPlaceAnchors = (
-  destinationName: string,
-  destinationCityCode: string | null | undefined,
-): string[] => {
-  const curatedAnchors = destinationCityCode
-    ? PLACE_ANCHORS_BY_CITY_CODE[destinationCityCode.toUpperCase()]
-    : undefined;
-
-  if (curatedAnchors && curatedAnchors.length > 0) {
-    return curatedAnchors;
-  }
-
-  return [
-    `${destinationName} Old Town`,
-    `${destinationName} Central Market`,
-    `${destinationName} Riverfront`,
-    `${destinationName} Museum Quarter`,
-    `${destinationName} Historic Center`,
-    `${destinationName} Food Street`,
-  ];
-};
-
-const pickActivities = (args: {
-  interest: string;
-  highRisk: boolean;
-  primaryAnchor: string;
-  secondaryAnchor: string;
-  eveningAnchor: string;
-  dayNumber: number;
-}): string[] => {
-  const {
-    interest,
-    highRisk,
-    primaryAnchor,
-    secondaryAnchor,
-    eveningAnchor,
-    dayNumber,
-  } = args;
-
-  if (highRisk) {
-    return [
-      `Day ${dayNumber}: Indoor ${interest} tour at ${primaryAnchor}`,
-      `Indoor exploration around ${secondaryAnchor} (museum/cultural center focus)`,
-      `Flexible evening dining plan near ${eveningAnchor}`,
-    ];
-  }
-
-  return [
-    `Day ${dayNumber}: ${interest} highlight tour at ${primaryAnchor}`,
-    `Neighborhood exploration around ${secondaryAnchor}`,
-    `Evening local food walk near ${eveningAnchor}`,
-  ];
-};
+const ItineraryDraftSchema = z.object({
+  itineraryDraft: z.array(ItineraryDaySchema),
+});
 
 export const runItineraryAgent = async (
   state: PlannerState,
-  deps: ItineraryAgentDependencies = defaultDependencies,
+  deps: ItineraryAgentDependencies,
 ): Promise<Partial<PlannerState>> => {
   if (!state.userRequest) {
     return {};
@@ -102,32 +41,43 @@ export const runItineraryAgent = async (
 
   const destinationIata = destination.iataCode ?? userRequest.destinationIata;
 
-  const flightOptions: FlightOption[] =
+  const [flightOptions, returnFlightOptions, weatherRisks] = await Promise.all([
     userRequest.originIata && destinationIata
-      ? await deps.searchFlights({
+      ? deps.searchFlights({
           originIata: userRequest.originIata,
           destinationIata,
           departureDate: userRequest.travelStartDate,
           adults: userRequest.adults,
           children: userRequest.children,
         })
-      : [];
-
-  const returnFlightOptions: FlightOption[] =
+      : Promise.resolve([]),
     userRequest.originIata && destinationIata
-      ? await deps.searchFlights({
+      ? deps.searchFlights({
           originIata: destinationIata,
           destinationIata: userRequest.originIata,
           departureDate: userRequest.travelEndDate,
           adults: userRequest.adults,
           children: userRequest.children,
         })
-      : [];
+      : Promise.resolve([]),
+    deps.fetchWeather({
+      destination: destination.name,
+      startDate: userRequest.travelStartDate,
+      endDate: userRequest.travelEndDate,
+    }),
+  ]);
 
-  const weatherRisks: WeatherRiskSummary = await deps.fetchWeather({
-    destination: destination.name,
-    startDate: userRequest.travelStartDate,
-    endDate: userRequest.travelEndDate,
+  const recommendedFlight = pickRecommendedFlightOption(
+    flightOptions,
+    userRequest.travelStartDate,
+  );
+  const recommendedReturnFlight = pickRecommendedFlightOption(
+    returnFlightOptions,
+    userRequest.travelEndDate,
+  );
+
+  const structuredModel = deps.model.withStructuredOutput(ItineraryDraftSchema, {
+    name: "ItineraryDraft",
   });
 
   const interests =
@@ -137,130 +87,49 @@ export const runItineraryAgent = async (
         ? userRequest.interests
         : ["sightseeing"];
 
-  const placeAnchors = buildPlaceAnchors(
-    destination.name,
-    destination.cityCode ?? userRequest.destinationCityCode,
-  );
+  const generated = await structuredModel.invoke(`
+You are a travel itinerary planner. Create a detailed day-by-day itinerary based on the following data.
 
-  const recommendedFlight = pickRecommendedFlightOption(
-    flightOptions,
-    userRequest.travelStartDate,
-  );
-  const arrivalDate = recommendedFlight
-    ? getFlightCalendarDate(recommendedFlight.arrivalAt)
-    : undefined;
+Destination: ${destination.name} (${destination.country})
+Travel dates: ${userRequest.travelStartDate} to ${userRequest.travelEndDate}
+Travelers: ${userRequest.adults} adults, ${userRequest.children} children
+Budget: ${userRequest.budget}
+Interests: ${interests.join(", ")}
+Travel style: ${state.preferences?.travelStyle ?? "balanced"}
+Preferred pace: ${state.preferences?.preferredPace ?? "normal"}
 
-  const recommendedReturnFlight = pickRecommendedFlightOption(
-    returnFlightOptions,
-    userRequest.travelEndDate,
-  );
-  const returnDepartureDate = recommendedReturnFlight
-    ? getFlightCalendarDate(recommendedReturnFlight.departureAt)
-    : undefined;
+Outbound flight: ${recommendedFlight ? `${recommendedFlight.offerId} departing ${recommendedFlight.departureAt}, arriving ${recommendedFlight.arrivalAt}, route: ${recommendedFlight.route.join(" → ")}, price ${recommendedFlight.totalPrice} ${recommendedFlight.currency}` : "none available"}
+Return flight: ${recommendedReturnFlight ? `${recommendedReturnFlight.offerId} departing ${recommendedReturnFlight.departureAt}, arriving ${recommendedReturnFlight.arrivalAt}, route: ${recommendedReturnFlight.route.join(" → ")}, price ${recommendedReturnFlight.totalPrice} ${recommendedReturnFlight.currency}` : "none available"}
 
-  let destinationDayNumber = 0;
+Weather forecast:
+${weatherRisks.daily.map((d) => `- ${d.date}: max ${d.temperatureMax}°C, min ${d.temperatureMin}°C, precipitation ${d.precipitationProbabilityMax}%, risk ${d.riskLevel}`).join("\n")}
 
-  const itineraryDraft: ItineraryDay[] = enumerateDates(
-    userRequest.travelStartDate,
-    userRequest.travelEndDate,
-  ).map((date) => {
-    const isTransitDayBeforeArrival = arrivalDate !== undefined && date < arrivalDate;
-    if (isTransitDayBeforeArrival) {
-      const route =
-        recommendedFlight?.route.length
-          ? recommendedFlight.route.join(" → ")
-          : `${userRequest.originIata ?? "origin"} → ${destinationIata ?? destination.name}`;
+Instructions:
+- If the outbound flight arrives after the start date, mark earlier days as transit days.
+- Mark the arrival day as a light schedule.
+- Mark the departure day for checkout and airport transfer.
+- For each destination day, assign a theme, 2-4 activities, and a weather note.
+- On high-risk weather days, prioritize indoor activities.
+- Spread interests across days.
+`);
 
-      return {
-        date,
-        theme: `Transit to ${destination.name}`,
-        activities: [
-          `Take flight ${recommendedFlight?.offerId ?? "(pending)"} on route ${route}`,
-          `Keep this day flexible for airport transfers and check-in`,
-          `Avoid fixed tours before arriving in ${destination.name}`,
-        ],
-        weatherNote: `Transit day; start destination activities after arrival on ${arrivalDate}.`,
-      };
-    }
-
-    destinationDayNumber += 1;
-    const interest = interests[(destinationDayNumber - 1) % interests.length] ?? "sightseeing";
-    const dayWeather = weatherRisks.daily.find((item) => item.date === date);
-    const highRisk = dayWeather?.riskLevel === "HIGH";
-    const primaryAnchor =
-      placeAnchors[(destinationDayNumber - 1) % placeAnchors.length] ??
-      `${destination.name} Historic Center`;
-    const secondaryAnchor =
-      placeAnchors[(destinationDayNumber + 1) % placeAnchors.length] ??
-      `${destination.name} Museum Quarter`;
-    const eveningAnchor =
-      placeAnchors[(destinationDayNumber + 3) % placeAnchors.length] ??
-      `${destination.name} Food Street`;
-    const isArrivalDay = arrivalDate !== undefined && date === arrivalDate;
-    const isDepartureDay = returnDepartureDate !== undefined && date === returnDepartureDate;
-
-    if (isArrivalDay) {
-      return {
-        date,
-        theme: `Arrival in ${destination.name}`,
-        activities: [
-          `Day ${destinationDayNumber}: Arrive via flight ${recommendedFlight?.offerId ?? "(pending)"}`,
-          `Complete immigration, transfer, and hotel check-in`,
-          `Take a light evening walk near ${eveningAnchor}`,
-        ],
-        weatherNote: `Arrival day; keep plans light before full exploration starts.`,
-      };
-    }
-
-    if (isDepartureDay) {
-      const returnRoute =
-        recommendedReturnFlight?.route.length
-          ? recommendedReturnFlight.route.join(" → ")
-          : `${destinationIata ?? destination.name} → ${userRequest.originIata ?? "origin"}`;
-
-      return {
-        date,
-        theme: `Departure from ${destination.name}`,
-        activities: [
-          `Day ${destinationDayNumber}: Check-out and transfer to airport`,
-          `Take return flight ${recommendedReturnFlight?.offerId ?? "(pending)"} on route ${returnRoute}`,
-          `Arrive home; end of trip`,
-        ],
-        weatherNote: `Departure day; keep luggage packed and allow buffer time for airport transfer.`,
-      };
-    }
-
-    return {
-      date,
-      theme: `${interest} in ${primaryAnchor}`,
-      activities: pickActivities({
-        interest,
-        highRisk,
-        primaryAnchor,
-        secondaryAnchor,
-        eveningAnchor,
-        dayNumber: destinationDayNumber,
-      }),
-      weatherNote: highRisk
-        ? `Weather risk is high for ${date}; prioritize indoor venues around ${primaryAnchor}`
-        : `Weather acceptable for outdoor activities around ${primaryAnchor}`,
-    };
-  });
+  const itineraryDraft = generated.itineraryDraft;
 
   return {
     flightOptions,
     returnFlightOptions,
     weatherRisks,
+    selectedFlightOfferId: recommendedFlight?.offerId ?? null,
+    selectedReturnFlightOfferId: recommendedReturnFlight?.offerId ?? null,
     itineraryDraft,
     decisionLog: [
       makeDecisionLog({
         agent: "itinerary_agent",
-        inputSummary: "Fetched outbound/return flights and drafted daily itinerary",
+        inputSummary: "Fetched outbound/return flights and weather; invoked LLM to draft itinerary",
         keyEvidence: [
           `outboundFlights=${flightOptions.length}`,
           `returnFlights=${returnFlightOptions.length}`,
           `highRiskDays=${weatherRisks.highRiskDates.length}`,
-          `placeAnchors=${placeAnchors.length}`,
         ],
         outputSummary: `Generated ${itineraryDraft.length}-day itinerary with return flight`,
         riskFlags:

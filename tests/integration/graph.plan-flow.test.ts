@@ -26,6 +26,51 @@ describe("planner graph integration", () => {
           },
         ],
       },
+      ItineraryDraft: {
+        itineraryDraft: [
+          {
+            date: "2026-07-01",
+            theme: "Arrival in Tokyo",
+            activities: ["Arrive at NRT", "Check-in at hotel", "Evening walk in Shinjuku"],
+            weatherNote: "Clear",
+          },
+          {
+            date: "2026-07-02",
+            theme: "Food and museums",
+            activities: ["Tsukiji Outer Market breakfast", "Tokyo National Museum", "Ramen dinner"],
+            weatherNote: "Rain expected; bring umbrella",
+          },
+          {
+            date: "2026-07-03",
+            theme: "Culture day",
+            activities: ["Meiji Shrine", "Harajuku exploration", "Sushi omakase"],
+            weatherNote: "Clear",
+          },
+          {
+            date: "2026-07-04",
+            theme: "Departure",
+            activities: ["Last-minute shopping", "Airport transfer", "Fly home"],
+            weatherNote: "Clear",
+          },
+        ],
+      },
+      BudgetAssessment: {
+        estimatedTotal: 1800,
+        budgetLimit: 2500,
+        withinBudget: true,
+        optimizationTips: ["Budget is comfortable; keep a small contingency for souvenirs."],
+      },
+      PackingList: {
+        packingList: ["Passport", "Phone charger", "Umbrella", "Comfortable walking shoes"],
+      },
+      RiskGuardScan: {
+        safetyFlags: [],
+        blocked: false,
+      },
+      PlanSynthesis: {
+        summary: "4-day Tokyo food and culture trip within budget.",
+        safetyFlags: [],
+      },
     }) as unknown as ChatOpenAI;
 
     const graph = await buildPlannerGraph({

@@ -29,6 +29,45 @@ describe("travel planner eval", () => {
             },
           ],
         },
+        ItineraryDraft: {
+          itineraryDraft: [
+            {
+              date: "2026-09-01",
+              theme: "Arrival in Seoul",
+              activities: ["Arrive at ICN", "Check-in", "Evening street food in Myeongdong"],
+              weatherNote: "Clear",
+            },
+            {
+              date: "2026-09-02",
+              theme: "Culture and food",
+              activities: ["Gyeongbokgung Palace", "Bukchon Hanok Village", "Korean BBQ dinner"],
+              weatherNote: "Partly cloudy",
+            },
+            {
+              date: "2026-09-03",
+              theme: "Departure",
+              activities: ["Namdaemun Market", "Transfer to ICN", "Fly home"],
+              weatherNote: "Clear",
+            },
+          ],
+        },
+        BudgetAssessment: {
+          estimatedTotal: 1500,
+          budgetLimit: 2000,
+          withinBudget: true,
+          optimizationTips: ["Budget is comfortable."],
+        },
+        PackingList: {
+          packingList: ["Passport", "Charger", "Comfortable shoes", "Light jacket"],
+        },
+        RiskGuardScan: {
+          safetyFlags: [],
+          blocked: false,
+        },
+        PlanSynthesis: {
+          summary: "3-day Seoul culture and food trip within budget.",
+          safetyFlags: [],
+        },
       }) as unknown as ChatOpenAI;
 
       const graph = await buildPlannerGraph({

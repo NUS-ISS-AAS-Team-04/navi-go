@@ -1,10 +1,8 @@
-import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
 import {
   detectPromptInjection,
   detectUnsafeOutput,
-  validateWithSchema,
 } from "../../../src/security/guardrails.js";
 
 describe("guardrails", () => {
@@ -21,12 +19,5 @@ describe("guardrails", () => {
     expect(flags).toHaveLength(1);
   });
 
-  it("validates payload with zod schema", () => {
-    const schema = z.object({ budget: z.number().positive() });
-    expect(validateWithSchema(schema, { budget: 123 })).toEqual({ budget: 123 });
 
-    expect(() => validateWithSchema(schema, { budget: -1 })).toThrow(
-      "Schema validation failed",
-    );
-  });
 });

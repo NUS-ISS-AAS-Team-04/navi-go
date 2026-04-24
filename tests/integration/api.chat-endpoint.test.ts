@@ -10,37 +10,115 @@ describe("plan chat API endpoint", () => {
   let app: Awaited<ReturnType<typeof createApiServer>>;
 
   beforeAll(async () => {
-    const fakeModel = new FakeStructuredChatModel({
-      RequirementExtraction: {
-        requestText: null,
-        originIata: null,
-        destinationHint: "Rome",
-        destinationCityCode: "ROM",
-        destinationIata: "FCO",
-        travelStartDate: null,
-        travelEndDate: null,
-        budget: 1800,
-        adults: 1,
-        children: null,
-        interests: ["history"],
-      },
-      PreferenceExtraction: {
-        travelStyle: "balanced",
-        prioritizedInterests: ["history"],
-        preferredPace: "normal",
-        accommodationPreference: "midrange",
-      },
-      DestinationSuggestions: {
-        candidates: [
+    const fakeModel = new FakeStructuredChatModel((key, prompt) => {
+      switch (key) {
+        case "RequirementExtraction":
+          return {
+            requestText: null,
+            originIata: null,
+            destinationHint: "Rome",
+            destinationCityCode: "ROM",
+            destinationIata: "FCO",
+            travelStartDate: null,
+            travelEndDate: null,
+            budget: 1800,
+            adults: 1,
+            children: null,
+            interests: ["history"],
+          };
+        case "FormCompletion":
           {
-            name: "Rome",
-            country: "Italy",
-            iataCode: "FCO",
-            cityCode: "ROM",
-            rationale: "Fits history-oriented request",
-          },
-        ],
-      },
+            const hasStartDate = prompt.includes("travelStartDate:");
+            const hasEndDate = prompt.includes("travelEndDate:");
+            if (!hasStartDate || !hasEndDate) {
+              return {
+                isComplete: false,
+                userRequest: null,
+                pendingQuestions: [
+                  "What is your planned departure date (format: YYYY-MM-DD)?",
+                  "What is your return date (format: YYYY-MM-DD)?",
+                ],
+              };
+            }
+            return {
+              isComplete: true,
+              userRequest: {
+                userId: "anonymous",
+                requestText: "Plan a history-focused trip to Rome",
+                destinationHint: "Rome",
+                destinationCityCode: "ROM",
+                destinationIata: "FCO",
+                travelStartDate: "2026-08-01",
+                travelEndDate: "2026-08-03",
+                budget: 1800,
+                adults: 1,
+                children: 0,
+                interests: ["history"],
+              },
+              pendingQuestions: [],
+            };
+          }
+        case "PreferenceExtraction":
+          return {
+            travelStyle: "balanced",
+            prioritizedInterests: ["history"],
+            preferredPace: "normal",
+            accommodationPreference: "midrange",
+          };
+        case "DestinationSuggestions":
+          return {
+            candidates: [
+              {
+                name: "Rome",
+                country: "Italy",
+                iataCode: "FCO",
+                cityCode: "ROM",
+                rationale: "Fits history-oriented request",
+              },
+            ],
+          };
+        case "ItineraryDraft":
+          return {
+            itineraryDraft: [
+              {
+                date: "2026-08-01",
+                theme: "Arrival in Rome",
+                activities: ["Arrive at FCO", "Check-in", "Evening passeggiata"],
+                weatherNote: "Sunny and warm",
+              },
+              {
+                date: "2026-08-02",
+                theme: "Ancient Rome",
+                activities: ["Colosseum tour", "Roman Forum", "Lunch in Monti"],
+                weatherNote: "Hot; carry water",
+              },
+              {
+                date: "2026-08-03",
+                theme: "Departure",
+                activities: ["Check-out", "Transfer to FCO", "Fly home"],
+                weatherNote: "Clear",
+              },
+            ],
+          };
+        case "BudgetAssessment":
+          return {
+            estimatedTotal: 1200,
+            budgetLimit: 1800,
+            withinBudget: true,
+            optimizationTips: ["Budget is healthy; keep a small buffer."],
+          };
+        case "PackingList":
+          return { packingList: ["Passport", "Charger", "Sunscreen", "Hat"] };
+        case "RiskGuardScan":
+          return { safetyFlags: [], blocked: false };
+        case "PlanSynthesis":
+          return {
+            summary: "3-day Rome history trip within budget.",
+            safetyFlags: [],
+          };
+        default:
+          return {};
+      }
     }) as unknown as ChatOpenAI;
 
     const graph = await buildPlannerGraph({

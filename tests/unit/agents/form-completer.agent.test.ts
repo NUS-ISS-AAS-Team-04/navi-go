@@ -1,7 +1,9 @@
+import type { ChatOpenAI } from "@langchain/openai";
 import { describe, expect, it } from "vitest";
 
 import { runFormCompleter } from "../../../src/agents/form-completer.agent.js";
 import type { PlannerState } from "../../../src/graph/state.js";
+import { FakeStructuredChatModel } from "../../helpers/fake-model.js";
 
 const baseState = (parsedRequest: Record<string, unknown>): PlannerState => ({
   userRequest: null,
@@ -19,6 +21,8 @@ const baseState = (parsedRequest: Record<string, unknown>): PlannerState => ({
   naturalLanguage: "Plan a trip to Tokyo",
   parsedRequest: parsedRequest as PlannerState["parsedRequest"],
   pendingQuestions: null,
+  selectedFlightOfferId: null,
+  selectedReturnFlightOfferId: null,
 });
 
 describe("form completer agent", () => {
@@ -30,7 +34,28 @@ describe("form completer agent", () => {
       destinationHint: "Tokyo",
     });
 
-    const update = await runFormCompleter(state);
+    const fakeModel = new FakeStructuredChatModel({
+      FormCompletion: {
+        isComplete: true,
+        userRequest: {
+          userId: "anonymous",
+          requestText: "Plan a trip to Tokyo",
+          originIata: undefined,
+          destinationHint: "Tokyo",
+          destinationCityCode: undefined,
+          destinationIata: undefined,
+          travelStartDate: "2026-07-01",
+          travelEndDate: "2026-07-05",
+          budget: 2500,
+          adults: 1,
+          children: 0,
+          interests: [],
+        },
+        pendingQuestions: [],
+      },
+    }) as unknown as ChatOpenAI;
+
+    const update = await runFormCompleter(state, { model: fakeModel });
 
     expect(update.userRequest).toBeDefined();
     expect(update.userRequest?.travelStartDate).toBe("2026-07-01");
@@ -45,7 +70,18 @@ describe("form completer agent", () => {
       budget: 2500,
     });
 
-    const update = await runFormCompleter(state);
+    const fakeModel = new FakeStructuredChatModel({
+      FormCompletion: {
+        isComplete: false,
+        userRequest: null,
+        pendingQuestions: [
+          "What is your planned departure date (format: YYYY-MM-DD)?",
+          "What is your return date (format: YYYY-MM-DD)?",
+        ],
+      },
+    }) as unknown as ChatOpenAI;
+
+    const update = await runFormCompleter(state, { model: fakeModel });
 
     expect(update.userRequest).toBeUndefined();
     expect(update.pendingQuestions).toBeDefined();
@@ -60,7 +96,7 @@ describe("form completer agent", () => {
       preferences: null,
       destinationCandidates: [],
       flightOptions: [],
-  returnFlightOptions: [],
+      returnFlightOptions: [],
       weatherRisks: null,
       itineraryDraft: [],
       budgetAssessment: null,
@@ -71,9 +107,13 @@ describe("form completer agent", () => {
       naturalLanguage: null,
       parsedRequest: null,
       pendingQuestions: null,
+      selectedFlightOfferId: null,
+      selectedReturnFlightOfferId: null,
     };
 
-    const update = await runFormCompleter(state);
+    const fakeModel = new FakeStructuredChatModel({}) as unknown as ChatOpenAI;
+
+    const update = await runFormCompleter(state, { model: fakeModel });
     expect(update).toEqual({});
   });
 });

@@ -38,6 +38,8 @@ describe("requirement parser agent", () => {
       naturalLanguage: "Plan a 5-day Tokyo trip for 2 adults with food and museums, budget 2500",
       parsedRequest: null,
       pendingQuestions: null,
+      selectedFlightOfferId: null,
+      selectedReturnFlightOfferId: null,
     };
 
     const update = await runRequirementParser(state, {
@@ -70,6 +72,8 @@ describe("requirement parser agent", () => {
       naturalLanguage: "Trip to Paris",
       parsedRequest: { requestText: "Trip to Paris" },
       pendingQuestions: null,
+      selectedFlightOfferId: null,
+      selectedReturnFlightOfferId: null,
     };
 
     const update = await runRequirementParser(state, {
@@ -98,6 +102,8 @@ describe("requirement parser agent", () => {
       naturalLanguage: null,
       parsedRequest: null,
       pendingQuestions: null,
+      selectedFlightOfferId: null,
+      selectedReturnFlightOfferId: null,
     };
 
     const update = await runRequirementParser(state, {

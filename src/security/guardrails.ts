@@ -1,5 +1,3 @@
-import type { ZodType } from "zod";
-
 const zeroWidthChars = /[\u200B-\u200D\uFEFF\u2060\u180E]/g;
 const homoglyphMap: Record<string, string> = {
   "𝟎": "0", "𝟘": "0", "𝟢": "0", "𝟬": "0", "𝟶": "0",
@@ -86,11 +84,3 @@ export const detectUnsafeOutput = (output: string): string[] => {
     .map((pattern) => `UNSAFE_OUTPUT:${pattern.source}`);
 };
 
-export const validateWithSchema = <T>(schema: ZodType<T>, value: unknown): T => {
-  const parsed = schema.safeParse(value);
-  if (!parsed.success) {
-    throw new Error(`Schema validation failed: ${parsed.error.message}`);
-  }
-
-  return parsed.data;
-};

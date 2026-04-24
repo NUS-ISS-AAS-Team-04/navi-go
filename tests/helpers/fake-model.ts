@@ -1,7 +1,11 @@
 import type { z } from "zod";
 
 export class FakeStructuredChatModel {
-  public constructor(private readonly outputs: Record<string, unknown>) {}
+  public constructor(
+    private readonly outputs:
+      | Record<string, unknown>
+      | ((key: string, prompt: string) => unknown),
+  ) {}
 
   public withStructuredOutput<TReturn extends Record<string, unknown>>(
     schema: z.ZodType<TReturn>,
@@ -11,8 +15,11 @@ export class FakeStructuredChatModel {
 
     return {
       invoke: async (prompt: string) => {
-        void prompt;
-        return schema.parse(this.outputs[key]);
+        const output =
+          typeof this.outputs === "function"
+            ? this.outputs(key, prompt)
+            : this.outputs[key];
+        return schema.parse(output);
       },
     };
   }

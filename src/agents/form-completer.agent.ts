@@ -1,73 +1,62 @@
+import { z } from "zod";
+import type { ChatOpenAI } from "@langchain/openai";
+
 import {
   UserRequestSchema,
   makeDecisionLog,
-  type ParsedRequest,
   type PlannerState,
-  type UserRequest,
 } from "../graph/state.js";
 
-const REQUIRED_FIELDS: Array<keyof ParsedRequest> = [
-  "travelStartDate",
-  "travelEndDate",
-  "budget",
-];
-
-const generateQuestions = (missing: string[]): string[] => {
-  return missing.map((field) => {
-    switch (field) {
-      case "travelStartDate":
-        return "What is your planned departure date (format: YYYY-MM-DD)?";
-      case "travelEndDate":
-        return "What is your return date (format: YYYY-MM-DD)?";
-      case "budget":
-        return "What is your travel budget (numeric amount)?";
-      default:
-        return `Please provide ${field}`;
-    }
-  });
+export type FormCompleterDependencies = {
+  model: ChatOpenAI;
 };
 
-const buildFullUserRequest = (
-  draft: ParsedRequest,
-  naturalLanguage: string | null,
-): UserRequest => {
-  return UserRequestSchema.parse({
-    userId: draft.userId ?? "anonymous",
-    requestText: draft.requestText ?? naturalLanguage ?? "Travel plan",
-    originIata: draft.originIata,
-    destinationHint: draft.destinationHint,
-    destinationCityCode: draft.destinationCityCode,
-    destinationIata: draft.destinationIata,
-    travelStartDate: draft.travelStartDate,
-    travelEndDate: draft.travelEndDate,
-    budget: draft.budget,
-    adults: draft.adults ?? 1,
-    children: draft.children ?? 0,
-    interests: draft.interests ?? [],
-  });
-};
+const FormCompletionSchema = z.object({
+  isComplete: z.boolean(),
+  userRequest: UserRequestSchema.nullable(),
+  pendingQuestions: z.array(z.string()),
+});
 
 export const runFormCompleter = async (
   state: PlannerState,
+  deps: FormCompleterDependencies,
 ): Promise<Partial<PlannerState>> => {
   if (!state.parsedRequest) {
     return {};
   }
 
-  const draft = { ...state.parsedRequest };
-  const missing = REQUIRED_FIELDS.filter(
-    (field) => draft[field] === undefined,
-  );
+  const structuredModel = deps.model.withStructuredOutput(FormCompletionSchema, {
+    name: "FormCompletion",
+  });
 
-  if (missing.length === 0) {
-    const userRequest = buildFullUserRequest(draft, state.naturalLanguage);
+  const generated = await structuredModel.invoke(`
+You are a travel planning form completer. Given the extracted fields below, determine if enough information is available to assemble a complete trip request.
+
+Required fields: userId, requestText, travelStartDate, travelEndDate, budget, adults, children, interests.
+Missing fields should use sensible defaults (adults=1, children=0, interests=[], userId="anonymous", requestText=the original natural language request).
+
+Extracted fields:
+${Object.entries(state.parsedRequest)
+  .map(([k, v]) => `- ${k}: ${v === undefined ? "missing" : v}`)
+  .join("\n")}
+
+Original request: ${state.naturalLanguage ?? "not provided"}
+
+Return:
+- isComplete: true only if travelStartDate, travelEndDate, and budget are present and valid
+- userRequest: the fully assembled UserRequest object if complete, otherwise null
+- pendingQuestions: 1-2 natural-language questions to ask the user for any missing required fields
+`);
+
+  if (generated.isComplete && generated.userRequest) {
+    const userRequest = UserRequestSchema.parse(generated.userRequest);
     return {
       userRequest,
       pendingQuestions: [],
       decisionLog: [
         makeDecisionLog({
           agent: "form_completer",
-          inputSummary: "Validated parsed request for completeness",
+          inputSummary: "Validated parsed request for completeness via LLM",
           keyEvidence: ["All required fields present"],
           outputSummary: "Assembled complete UserRequest",
           riskFlags: [],
@@ -76,16 +65,14 @@ export const runFormCompleter = async (
     };
   }
 
-  const questions = generateQuestions(missing);
-
   return {
-    pendingQuestions: questions,
+    pendingQuestions: generated.pendingQuestions,
     decisionLog: [
       makeDecisionLog({
         agent: "form_completer",
-        inputSummary: "Validated parsed request for completeness",
-        keyEvidence: missing.map((f) => `missing=${f}`),
-        outputSummary: `Awaiting user input for ${missing.length} required fields`,
+        inputSummary: "Validated parsed request for completeness via LLM",
+        keyEvidence: generated.pendingQuestions.map((q) => `missing=${q}`),
+        outputSummary: `Awaiting user input for ${generated.pendingQuestions.length} required fields`,
         riskFlags: [],
       }),
     ],

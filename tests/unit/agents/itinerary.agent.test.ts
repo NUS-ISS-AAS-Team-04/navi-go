@@ -1,7 +1,9 @@
+import type { ChatOpenAI } from "@langchain/openai";
 import { describe, expect, it } from "vitest";
 
 import { runItineraryAgent } from "../../../src/agents/itinerary.agent.js";
 import type { PlannerState } from "../../../src/graph/state.js";
+import { FakeStructuredChatModel } from "../../helpers/fake-model.js";
 
 const makeBaseState = (): PlannerState => ({
   userRequest: {
@@ -45,13 +47,41 @@ const makeBaseState = (): PlannerState => ({
   naturalLanguage: null,
   parsedRequest: null,
   pendingQuestions: null,
+  selectedFlightOfferId: null,
+  selectedReturnFlightOfferId: null,
 });
 
 describe("itinerary agent", () => {
   it("builds concrete non-duplicated daily activities", async () => {
     const state = makeBaseState();
 
+    const fakeModel = new FakeStructuredChatModel({
+      ItineraryDraft: {
+        itineraryDraft: [
+          {
+            date: "2026-09-01",
+            theme: "history in Colosseum",
+            activities: ["Morning visit to Colosseum", "Evening walk around Roman Forum"],
+            weatherNote: "Sunny and warm",
+          },
+          {
+            date: "2026-09-02",
+            theme: "food in Trastevere",
+            activities: ["Indoor cooking class", "Evening food tour"],
+            weatherNote: "High rain risk; prioritize indoor venues",
+          },
+          {
+            date: "2026-09-03",
+            theme: "history in Pantheon",
+            activities: ["Explore Pantheon", "Coffee at Piazza della Rotonda"],
+            weatherNote: "Clear skies",
+          },
+        ],
+      },
+    }) as unknown as ChatOpenAI;
+
     const update = await runItineraryAgent(state, {
+      model: fakeModel,
       searchFlights: async () => [],
       fetchWeather: async () => ({
         location: "Rome, Italy",
@@ -94,10 +124,7 @@ describe("itinerary agent", () => {
     expect(new Set(activitySignatures).size).toBe(activitySignatures.length);
 
     expect(update.itineraryDraft?.[0]?.activities.join(" ")).toContain("Colosseum");
-    expect(update.itineraryDraft?.[1]?.activities.join(" ")).toContain("Roman Forum");
-    expect(update.itineraryDraft?.[1]?.activities.join(" ").toLowerCase()).toContain(
-      "indoor",
-    );
+    expect(update.itineraryDraft?.[1]?.activities.join(" ").toLowerCase()).toContain("indoor");
   });
 
   it("falls back to destination-derived anchors for unknown city codes", async () => {
@@ -121,7 +148,33 @@ describe("itinerary agent", () => {
       },
     };
 
+    const fakeModel = new FakeStructuredChatModel({
+      ItineraryDraft: {
+        itineraryDraft: [
+          {
+            date: "2026-09-01",
+            theme: "Oslo Old Town exploration",
+            activities: ["Walk through Oslo Old Town", "Visit local museum"],
+            weatherNote: "Cool and clear",
+          },
+          {
+            date: "2026-09-02",
+            theme: "Vigeland Park tour",
+            activities: ["Morning stroll in Vigeland Park", "Lunch at Mathallen"],
+            weatherNote: "Partly cloudy",
+          },
+          {
+            date: "2026-09-03",
+            theme: "Opera House visit",
+            activities: ["Tour Oslo Opera House", "Harbor walk"],
+            weatherNote: "Clear",
+          },
+        ],
+      },
+    }) as unknown as ChatOpenAI;
+
     const update = await runItineraryAgent(state, {
+      model: fakeModel,
       searchFlights: async () => [],
       fetchWeather: async () => ({
         location: "Oslo, Norway",
@@ -163,7 +216,33 @@ describe("itinerary agent", () => {
   it("marks pre-arrival dates as transit days when flight arrives later", async () => {
     const state = makeBaseState();
 
+    const fakeModel = new FakeStructuredChatModel({
+      ItineraryDraft: {
+        itineraryDraft: [
+          {
+            date: "2026-09-01",
+            theme: "Transit to Rome",
+            activities: ["Take flight F-LATE on route SFO-HND → HND-FCO", "Keep this day flexible for airport transfers and check-in"],
+            weatherNote: "Transit day; start destination activities after arrival on 2026-09-02.",
+          },
+          {
+            date: "2026-09-02",
+            theme: "Arrival in Rome",
+            activities: ["Arrive via flight F-LATE", "Complete immigration, transfer, and hotel check-in", "Light evening walk near historic center"],
+            weatherNote: "Arrival day; keep plans light before full exploration starts.",
+          },
+          {
+            date: "2026-09-03",
+            theme: "history in Roman Forum",
+            activities: ["Explore Roman Forum", "Lunch at Campo de' Fiori"],
+            weatherNote: "Clear skies",
+          },
+        ],
+      },
+    }) as unknown as ChatOpenAI;
+
     const update = await runItineraryAgent(state, {
+      model: fakeModel,
       searchFlights: async () => [
         {
           offerId: "F-LATE",
@@ -212,6 +291,6 @@ describe("itinerary agent", () => {
     expect(update.itineraryDraft?.[0]?.theme).toBe("Transit to Rome");
     expect(update.itineraryDraft?.[0]?.activities[0]).toContain("F-LATE");
     expect(update.itineraryDraft?.[1]?.theme).toBe("Arrival in Rome");
-    expect(update.itineraryDraft?.[2]?.theme).toMatch(/(history|food) in /);
+    expect(update.itineraryDraft?.[2]?.theme).toMatch(/history in /);
   });
 });

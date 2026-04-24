@@ -6,18 +6,19 @@ import {
 } from "@langchain/langgraph";
 import type { ChatOpenAI } from "@langchain/openai";
 
-import { runBudgetAgent } from "../agents/budget.agent.js";
+import { runBudgetAgent, type BudgetAgentDependencies } from "../agents/budget.agent.js";
 import { runDestinationAgent } from "../agents/destination.agent.js";
-import { runFormCompleter } from "../agents/form-completer.agent.js";
+import { runFormCompleter, type FormCompleterDependencies } from "../agents/form-completer.agent.js";
 import {
   runItineraryAgent,
   type ItineraryAgentDependencies,
+  defaultItineraryDeps,
 } from "../agents/itinerary.agent.js";
-import { runPackingAgent } from "../agents/packing.agent.js";
-import { runPlanSynthesizerAgent } from "../agents/plan-synthesizer.agent.js";
+import { runPackingAgent, type PackingAgentDependencies } from "../agents/packing.agent.js";
+import { runPlanSynthesizerAgent, type PlanSynthesizerDependencies } from "../agents/plan-synthesizer.agent.js";
 import { runPreferenceAgent } from "../agents/preference.agent.js";
 import { runRequirementParser } from "../agents/requirement-parser.agent.js";
-import { runRiskGuardAgent } from "../agents/risk-guard.agent.js";
+import { runRiskGuardAgent, type RiskGuardDependencies } from "../agents/risk-guard.agent.js";
 import { createPlanningModel } from "../config/models.js";
 import { createPostgresCheckpointer } from "../persistence/checkpointer.js";
 import {
@@ -32,7 +33,12 @@ import { PlannerStateAnnotation } from "./state.js";
 export type PlannerGraphDependencies = {
   model?: ChatOpenAI;
   checkpointer?: BaseCheckpointSaver;
-  itineraryAgentDependencies?: ItineraryAgentDependencies;
+  itineraryAgentDependencies?: Omit<ItineraryAgentDependencies, "model">;
+  budgetAgentDependencies?: Omit<BudgetAgentDependencies, "model">;
+  packingAgentDependencies?: Omit<PackingAgentDependencies, "model">;
+  planSynthesizerDependencies?: Omit<PlanSynthesizerDependencies, "model">;
+  riskGuardDependencies?: Omit<RiskGuardDependencies, "model">;
+  formCompleterDependencies?: Omit<FormCompleterDependencies, "model">;
 };
 
 export const buildPlannerGraph = async (
@@ -42,18 +48,23 @@ export const buildPlannerGraph = async (
   const checkpointer = deps.checkpointer ?? (await createPostgresCheckpointer());
 
   const graphBuilder = new StateGraph(PlannerStateAnnotation)
-    .addNode("risk_guard", runRiskGuardAgent)
+    .addNode("risk_guard", (state) => runRiskGuardAgent(state, { model, ...deps.riskGuardDependencies }))
     .addNode("supervisor", runSupervisorNode)
     .addNode("preference_agent", (state) => runPreferenceAgent(state, { model }))
     .addNode("destination_agent", (state) => runDestinationAgent(state, { model }))
-    .addNode("itinerary_agent", (state) =>
-      runItineraryAgent(state, deps.itineraryAgentDependencies),
-    )
-    .addNode("budget_agent", runBudgetAgent)
-    .addNode("packing_agent", runPackingAgent)
-    .addNode("plan_synthesizer", runPlanSynthesizerAgent)
+    .addNode("itinerary_agent", (state) => {
+      const itineraryDeps: ItineraryAgentDependencies = {
+        model,
+        ...defaultItineraryDeps,
+        ...deps.itineraryAgentDependencies,
+      };
+      return runItineraryAgent(state, itineraryDeps);
+    })
+    .addNode("budget_agent", (state) => runBudgetAgent(state, { model, ...deps.budgetAgentDependencies }))
+    .addNode("packing_agent", (state) => runPackingAgent(state, { model, ...deps.packingAgentDependencies }))
+    .addNode("plan_synthesizer", (state) => runPlanSynthesizerAgent(state, { model, ...deps.planSynthesizerDependencies }))
     .addNode("requirement_parser", (state) => runRequirementParser(state, { model }))
-    .addNode("form_completer", runFormCompleter)
+    .addNode("form_completer", (state) => runFormCompleter(state, { model, ...deps.formCompleterDependencies }))
     .addConditionalEdges(START, routeFromStart)
     .addEdge("requirement_parser", "form_completer")
     .addConditionalEdges("form_completer", routeFromFormCompleter)

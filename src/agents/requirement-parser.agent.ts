@@ -43,7 +43,7 @@ export const runRequirementParser = async (
   const extracted = await structuredModel.invoke(`
 You are a travel planning assistant. Extract structured trip requirements from the user's natural language request.
 
-User request: "${state.naturalLanguage}"
+User request: ${JSON.stringify(state.naturalLanguage)}
 
 Extract all fields you can identify. If a field is not mentioned, omit it.
 - Dates must be in YYYY-MM-DD format.

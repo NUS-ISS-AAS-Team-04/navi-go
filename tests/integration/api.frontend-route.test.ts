@@ -28,6 +28,45 @@ describe("frontend static route", () => {
           },
         ],
       },
+      ItineraryDraft: {
+        itineraryDraft: [
+          {
+            date: "2026-08-01",
+            theme: "Arrival in Rome",
+            activities: ["Arrive at FCO", "Check-in", "Evening passeggiata"],
+            weatherNote: "Sunny and warm",
+          },
+          {
+            date: "2026-08-02",
+            theme: "Ancient Rome",
+            activities: ["Colosseum tour", "Roman Forum", "Lunch in Monti"],
+            weatherNote: "Hot; carry water",
+          },
+          {
+            date: "2026-08-03",
+            theme: "Departure",
+            activities: ["Check-out", "Transfer to FCO", "Fly home"],
+            weatherNote: "Clear",
+          },
+        ],
+      },
+      BudgetAssessment: {
+        estimatedTotal: 1200,
+        budgetLimit: 1800,
+        withinBudget: true,
+        optimizationTips: ["Budget is healthy; keep a small buffer."],
+      },
+      PackingList: {
+        packingList: ["Passport", "Charger", "Sunscreen", "Hat"],
+      },
+      RiskGuardScan: {
+        safetyFlags: [],
+        blocked: false,
+      },
+      PlanSynthesis: {
+        summary: "3-day Rome history trip within budget.",
+        safetyFlags: [],
+      },
     }) as unknown as ChatOpenAI;
 
     const graph = await buildPlannerGraph({

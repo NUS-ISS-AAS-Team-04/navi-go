@@ -144,6 +144,14 @@ export const PlannerStateAnnotation = Annotation.Root({
     reducer: replaceReducer,
     default: () => [],
   }),
+  selectedFlightOfferId: Annotation<string | null>({
+    reducer: replaceReducer,
+    default: () => null,
+  }),
+  selectedReturnFlightOfferId: Annotation<string | null>({
+    reducer: replaceReducer,
+    default: () => null,
+  }),
   safetyFlags: Annotation<string[]>({
     reducer: (left, right) => [...new Set([...left, ...right])],
     default: () => [],
